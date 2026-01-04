@@ -1,5 +1,5 @@
 {
-  "name": "@impackers/build-metadata-plugin",
+  "name": "get-metadata",
   "version": "0.1.0",
   "description": "Build plugin for extracting project metadata for ticket analysis system",
   "type": "module",
@@ -21,7 +21,7 @@
     }
   },
   "bin": {
-    "metadata-plugin": "./dist/cli.js"
+    "get-metadata": "./dist/cli.js"
   },
   "files": [
     "dist"

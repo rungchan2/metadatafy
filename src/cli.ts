@@ -10,10 +10,10 @@ import type { PluginConfig } from './core/types';
 const VERSION = '0.1.0';
 
 const HELP_TEXT = `
-@impackers/build-metadata-plugin CLI
+get-metadata - 프로젝트 메타데이터 추출 도구
 
 Usage:
-  metadata-plugin <command> [options]
+  get-metadata <command> [options]
 
 Commands:
   analyze     프로젝트를 분석하고 메타데이터 생성
@@ -24,13 +24,13 @@ Options:
   -v, --version    버전 표시
 
 Examples:
-  metadata-plugin analyze
-  metadata-plugin analyze --project-id my-project --output ./metadata.json
-  metadata-plugin init
+  get-metadata analyze
+  get-metadata analyze --project-id my-project --output ./metadata.json
+  get-metadata init
 `;
 
 const ANALYZE_HELP = `
-Usage: metadata-plugin analyze [options]
+Usage: get-metadata analyze [options]
 
 Options:
   -p, --project-id <id>   프로젝트 ID (기본값: 폴더명)
