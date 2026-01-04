@@ -55,7 +55,7 @@
     "@types/node": "^20.0.0",
     "@types/webpack": "^5.28.5",
     "eslint": "^9.0.0",
-    "next": "^14.0.0",
+    "next": "^16.1.1",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0",

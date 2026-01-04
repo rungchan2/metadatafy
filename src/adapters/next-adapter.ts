@@ -124,8 +124,8 @@ module.exports = createMetadataAdapter(${JSON.stringify(options, null, 2)});
 
 /**
  * Next.js 설정을 확장하는 함수
- * Next.js 16+ Turbopack: experimental.adapterPath 사용
- * Next.js 15- Webpack: webpack 플러그인 사용
+ * Next.js 16+ Turbopack: compiler.runAfterProductionCompile 사용
+ * Next.js 15- Webpack: webpack 플러그인 사용 (폴백)
  */
 export function withMetadata(
   options: NextPluginOptions = {}
@@ -141,19 +141,65 @@ export function withMetadata(
     );
   }
 
+  // 중복 실행 방지 플래그
+  let hasRunInCompiler = false;
+
   return (nextConfig: NextConfig): NextConfig => {
-    // Next.js 16+ Turbopack 지원: experimental.adapterPath
-    // 사용자가 직접 어댑터 설정을 추가해야 함
-    // 이 함수는 webpack 폴백도 제공
+    // 기존 runAfterProductionCompile 훅 보존
+    const existingRunAfterProductionCompile = (
+      nextConfig as NextConfigWithCompiler
+    ).compiler?.runAfterProductionCompile;
 
     return {
       ...nextConfig,
 
+      // Next.js 16+ Turbopack 지원: compiler.runAfterProductionCompile
+      compiler: {
+        ...(nextConfig as NextConfigWithCompiler).compiler,
+
+        async runAfterProductionCompile(metadata: {
+          distDir: string;
+          projectDir: string;
+        }) {
+          // 기존 훅 실행
+          if (existingRunAfterProductionCompile) {
+            await existingRunAfterProductionCompile(metadata);
+          }
+
+          // build 모드에서만 실행 (runOn 설정 확인)
+          if (runOn !== 'build' && runOn !== 'both') {
+            return;
+          }
+
+          hasRunInCompiler = true;
+
+          if (pluginConfig.verbose) {
+            console.log(
+              '[metadata-plugin] runAfterProductionCompile triggered'
+            );
+          }
+
+          await runMetadataAnalysis(pluginConfig, metadata.projectDir);
+
+          if (pluginConfig.verbose) {
+            console.log('[metadata-plugin] Analysis completed');
+          }
+        },
+      },
+
+      // Webpack 폴백 (Next.js 15 이하 또는 --webpack 플래그 사용 시)
       webpack(config, context) {
         const { dev, isServer } = context;
 
         // 서버 사이드에서만 실행 (클라이언트 빌드에서 중복 실행 방지)
         if (!isServer) {
+          return typeof nextConfig.webpack === 'function'
+            ? nextConfig.webpack(config, context)
+            : config;
+        }
+
+        // runAfterProductionCompile에서 이미 실행했으면 스킵
+        if (hasRunInCompiler) {
           return typeof nextConfig.webpack === 'function'
             ? nextConfig.webpack(config, context)
             : config;
@@ -178,6 +224,13 @@ export function withMetadata(
       },
     };
   };
+}
+
+/**
+ * Next.js config with compiler option (internal type)
+ */
+interface NextConfigWithCompiler extends NextConfig {
+  compiler?: NextConfig['compiler'];
 }
 
 /**
