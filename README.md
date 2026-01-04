@@ -45,12 +45,14 @@ This will:
 - Detect your package manager (npm, yarn, pnpm)
 - Create a `metadata.config.json` with optimized settings
 - Optionally add the plugin to your build config (vite.config.ts or next.config.js)
+- Optionally configure Supabase integration for automatic uploads
 
 이 명령어는:
 - 프로젝트 타입 자동 감지 (Next.js, Vite, CRA 등)
 - 패키지 매니저 감지 (npm, yarn, pnpm)
 - 최적화된 설정으로 `metadata.config.json` 생성
 - 선택적으로 빌드 설정에 플러그인 추가 (vite.config.ts 또는 next.config.js)
+- 선택적으로 Supabase 연동 설정 (자동 업로드)
 
 ```
 $ npx metadatafy init
@@ -100,6 +102,7 @@ npx metadatafy analyze --project-id my-project --output ./metadata.json --verbos
 | Command | Description |
 |---------|-------------|
 | `init` | Interactive setup wizard / 인터랙티브 설정 마법사 |
+| `database-init` | Database connection setup (Supabase, etc.) / 데이터베이스 연동 설정 |
 | `analyze` | Analyze project and generate metadata / 프로젝트 분석 및 메타데이터 생성 |
 
 #### Analyze Options / Analyze 옵션
@@ -337,6 +340,123 @@ Built-in mappings include common development terms:
 You can extend with custom mappings in config.
 
 설정에서 커스텀 매핑을 추가할 수 있습니다.
+
+## Database Integration / 데이터베이스 연동
+
+Automatically upload metadata to Supabase on every build. Uses Service Role Key for RLS bypass.
+
+빌드할 때마다 자동으로 Supabase에 메타데이터를 업로드합니다. Service Role Key를 사용하여 RLS를 우회합니다.
+
+### Setup with init / init으로 설정
+
+The easiest way is through `npx metadatafy init`:
+
+가장 쉬운 방법은 `npx metadatafy init`을 사용하는 것입니다:
+
+```
+🗄️  Supabase에 메타데이터를 자동 저장할까요?
+  빌드 시 자동으로 데이터베이스에 업로드됩니다.
+
+Supabase 연동 설정? [y/N]: y
+
+🔧 Supabase 설정
+Settings > API에서 확인할 수 있습니다.
+
+💡 환경변수 이름을 입력하면 ${VAR} 형식으로 저장됩니다.
+   예: SUPABASE_URL → ${SUPABASE_URL}
+
+Supabase URL 환경변수 이름 [SUPABASE_URL]:
+Service Role Key 환경변수 이름 [SUPABASE_SERVICE_ROLE_KEY]:
+테이블 이름 [project_metadata]:
+```
+
+### Manual Setup / 수동 설정
+
+Or use the dedicated command:
+
+또는 전용 명령어를 사용하세요:
+
+```bash
+npx metadatafy database-init
+```
+
+### Direct Plugin Configuration / 플러그인 직접 설정
+
+You can also pass Supabase config directly to the plugin:
+
+플러그인에 직접 Supabase 설정을 전달할 수도 있습니다:
+
+```typescript
+// vite.config.ts
+import metadatafy from 'metadatafy/vite';
+
+export default defineConfig({
+  plugins: [
+    metadatafy({
+      projectId: 'my-project',
+      supabase: {
+        url: process.env.SUPABASE_URL!,
+        serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        tableName: 'project_metadata',
+      },
+    }),
+  ],
+});
+```
+
+```typescript
+// next.config.ts
+import { withMetadata } from 'metadatafy/next';
+
+export default withMetadata({
+  projectId: 'my-project',
+  supabase: {
+    url: process.env.SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tableName: 'project_metadata',
+  },
+})(nextConfig);
+```
+
+### Supabase Table Schema / Supabase 테이블 스키마
+
+```sql
+CREATE TABLE project_metadata (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  project_id TEXT UNIQUE NOT NULL,
+  metadata JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS Policy (optional - Service Role Key bypasses RLS)
+ALTER TABLE project_metadata ENABLE ROW LEVEL SECURITY;
+```
+
+### Environment Variables / 환경변수
+
+Add to your `.env` file:
+
+`.env` 파일에 추가하세요:
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+> **Note**: Service Role Key is used (not anon key) to bypass RLS and ensure reliable upserts.
+>
+> **참고**: RLS 우회 및 안정적인 upsert를 위해 Service Role Key를 사용합니다 (anon key가 아님).
+
+### How It Works / 작동 방식
+
+- **Upsert by project_id**: If a record with the same `project_id` exists, it updates. Otherwise, it creates a new record.
+- **Automatic on build**: When using Vite/Next.js plugins with Supabase config, metadata is uploaded on every build.
+- **CLI support**: `npx metadatafy analyze` also uploads if database config is in `metadata.config.json`.
+
+- **project_id 기준 upsert**: 동일한 `project_id`가 있으면 업데이트, 없으면 새로 생성합니다.
+- **빌드 시 자동 업로드**: Vite/Next.js 플러그인에 Supabase 설정이 있으면 빌드마다 자동 업로드됩니다.
+- **CLI 지원**: `npx metadatafy analyze`도 `metadata.config.json`에 database 설정이 있으면 업로드합니다.
 
 ## License / 라이선스
 

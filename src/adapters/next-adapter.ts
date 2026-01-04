@@ -7,6 +7,8 @@ import { ProjectAnalyzer } from '../core/analyzer';
 import { createDefaultConfig, validateConfig } from '../core/config';
 import { FileWriter } from '../core/output/file-writer';
 import { ApiSender } from '../core/output/api-sender';
+import { createProvider } from '../cli/database/provider';
+import type { SupabaseConfig } from '../cli/database/types';
 
 export interface NextPluginOptions extends Partial<PluginConfig> {
   /**
@@ -16,6 +18,31 @@ export interface NextPluginOptions extends Partial<PluginConfig> {
    * - 'both': 둘 다
    */
   runOn?: 'build' | 'dev' | 'both';
+
+  /**
+   * Supabase 설정 (직접 전달)
+   * 환경변수를 직접 전달할 때 사용
+   *
+   * @example
+   * withMetadatafy({
+   *   supabase: {
+   *     url: process.env.SUPABASE_URL,
+   *     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+   *     tableName: 'project_metadata',
+   *   }
+   * })
+   */
+  supabase?: {
+    url: string;
+    serviceRoleKey: string;
+    tableName: string;
+    fields?: {
+      projectId?: string;
+      metadata?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    };
+  };
 }
 
 /**
@@ -23,7 +50,8 @@ export interface NextPluginOptions extends Partial<PluginConfig> {
  */
 async function runMetadataAnalysis(
   pluginConfig: PluginConfig,
-  rootDir: string
+  rootDir: string,
+  supabaseOptions?: NextPluginOptions['supabase']
 ): Promise<void> {
   const analyzer = new ProjectAnalyzer(pluginConfig);
   const fileWriter = new FileWriter(pluginConfig);
@@ -55,6 +83,38 @@ async function runMetadataAnalysis(
       console.log('[metadata-plugin] Sent metadata to API');
     }
   }
+
+  // Supabase 업로드 (직접 전달된 경우)
+  if (supabaseOptions?.url && supabaseOptions?.serviceRoleKey) {
+    try {
+      const supabaseConfig: SupabaseConfig = {
+        provider: 'supabase',
+        enabled: true,
+        url: supabaseOptions.url,
+        serviceRoleKey: supabaseOptions.serviceRoleKey,
+        tableName: supabaseOptions.tableName,
+        fields: {
+          projectId: supabaseOptions.fields?.projectId || 'project_id',
+          metadata: supabaseOptions.fields?.metadata || 'metadata',
+          createdAt: supabaseOptions.fields?.createdAt || 'created_at',
+          updatedAt: supabaseOptions.fields?.updatedAt || 'updated_at',
+        },
+      };
+
+      const provider = await createProvider(supabaseConfig);
+      const uploadResult = await provider.upload(result);
+
+      if (pluginConfig.verbose) {
+        if (uploadResult.success) {
+          console.log(`[metadata-plugin] ${uploadResult.message} (Supabase)`);
+        } else {
+          console.log(`[metadata-plugin] Supabase upload failed: ${uploadResult.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('[metadata-plugin] Supabase upload error:', error);
+    }
+  }
 }
 
 /**
@@ -63,6 +123,7 @@ async function runMetadataAnalysis(
  */
 export function createMetadataAdapter(options: NextPluginOptions = {}) {
   const pluginConfig = createDefaultConfig(options);
+  const supabaseOptions = options.supabase;
 
   // 설정 검증
   const errors = validateConfig(pluginConfig);
@@ -90,7 +151,7 @@ export function createMetadataAdapter(options: NextPluginOptions = {}) {
         console.log('[metadata-plugin] Build completed, running analysis...');
       }
 
-      await runMetadataAnalysis(pluginConfig, projectDir);
+      await runMetadataAnalysis(pluginConfig, projectDir, supabaseOptions);
 
       if (pluginConfig.verbose) {
         console.log('[metadata-plugin] Analysis completed');
@@ -132,6 +193,7 @@ export function withMetadata(
 ): (nextConfig: NextConfig) => NextConfig {
   const pluginConfig = createDefaultConfig(options);
   const runOn = options.runOn || 'build';
+  const supabaseOptions = options.supabase;
 
   // 설정 검증
   const errors = validateConfig(pluginConfig);
@@ -179,7 +241,7 @@ export function withMetadata(
             );
           }
 
-          await runMetadataAnalysis(pluginConfig, metadata.projectDir);
+          await runMetadataAnalysis(pluginConfig, metadata.projectDir, supabaseOptions);
 
           if (pluginConfig.verbose) {
             console.log('[metadata-plugin] Analysis completed');
@@ -212,7 +274,7 @@ export function withMetadata(
 
         if (shouldRun) {
           config.plugins = config.plugins || [];
-          config.plugins.push(new MetadataWebpackPlugin(pluginConfig));
+          config.plugins.push(new MetadataWebpackPlugin(pluginConfig, supabaseOptions));
         }
 
         // 기존 webpack 설정 체이닝
@@ -238,10 +300,12 @@ interface NextConfigWithCompiler extends NextConfig {
  */
 class MetadataWebpackPlugin implements WebpackPluginInstance {
   private config: PluginConfig;
+  private supabaseOptions?: NextPluginOptions['supabase'];
   private hasRun: boolean = false;
 
-  constructor(config: PluginConfig) {
+  constructor(config: PluginConfig, supabaseOptions?: NextPluginOptions['supabase']) {
     this.config = config;
+    this.supabaseOptions = supabaseOptions;
   }
 
   apply(compiler: Compiler): void {
@@ -258,7 +322,7 @@ class MetadataWebpackPlugin implements WebpackPluginInstance {
         this.hasRun = true;
 
         try {
-          await runMetadataAnalysis(this.config, compiler.context);
+          await runMetadataAnalysis(this.config, compiler.context, this.supabaseOptions);
           callback();
         } catch (error) {
           callback(error as Error);

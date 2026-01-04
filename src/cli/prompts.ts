@@ -113,3 +113,46 @@ export async function confirm(message: string, defaultYes = true): Promise<boole
   }
   return trimmed === 'y' || trimmed === 'yes';
 }
+
+/**
+ * Supabase 연동 여부
+ */
+export async function askSupabaseIntegration(): Promise<boolean> {
+  console.log('\n🗄️  Supabase에 메타데이터를 자동 저장할까요?');
+  console.log('  빌드 시 자동으로 데이터베이스에 업로드됩니다.');
+
+  const answer = await question('\nSupabase 연동 설정? [y/N]: ');
+  return answer.trim().toLowerCase() === 'y';
+}
+
+/**
+ * Supabase 설정 입력 (간단 버전)
+ */
+export interface SupabaseSetupResult {
+  url: string;
+  serviceRoleKey: string;
+  tableName: string;
+}
+
+export async function askSupabaseSetup(): Promise<SupabaseSetupResult | null> {
+  console.log('\n🔧 Supabase 설정');
+  console.log('Settings > API에서 확인할 수 있습니다.\n');
+
+  // 환경변수 사용 안내
+  console.log('💡 환경변수 이름을 입력하면 ${VAR} 형식으로 저장됩니다.');
+  console.log('   예: SUPABASE_URL → ${SUPABASE_URL}\n');
+
+  const urlInput = await question('Supabase URL 환경변수 이름 [SUPABASE_URL]: ');
+  const keyInput = await question('Service Role Key 환경변수 이름 [SUPABASE_SERVICE_ROLE_KEY]: ');
+  const tableInput = await question('테이블 이름 [project_metadata]: ');
+
+  const urlEnvName = urlInput.trim() || 'SUPABASE_URL';
+  const keyEnvName = keyInput.trim() || 'SUPABASE_SERVICE_ROLE_KEY';
+  const tableName = tableInput.trim() || 'project_metadata';
+
+  return {
+    url: `\${${urlEnvName}}`,
+    serviceRoleKey: `\${${keyEnvName}}`,
+    tableName,
+  };
+}

@@ -8,6 +8,11 @@ export interface InitOptions {
   projectInfo: ProjectInfo;
   addBuildIntegration: boolean;
   apiEndpoint: string | null;
+  supabase?: {
+    url: string;
+    serviceRoleKey: string;
+    tableName: string;
+  } | null;
 }
 
 /**
@@ -77,7 +82,7 @@ export async function writeMetadataConfig(
 ): Promise<string> {
   const configPath = path.join(rootDir, 'metadata.config.json');
 
-  const config = {
+  const config: Record<string, unknown> = {
     projectId,
     include: getIncludePatterns(options),
     exclude: [
@@ -98,6 +103,23 @@ export async function writeMetadataConfig(
         enabled: !!options.apiEndpoint,
         endpoint: options.apiEndpoint || '',
       },
+      ...(options.supabase && {
+        database: {
+          enabled: true,
+          provider: 'supabase',
+          supabase: {
+            url: options.supabase.url,
+            serviceRoleKey: options.supabase.serviceRoleKey,
+            tableName: options.supabase.tableName,
+            fields: {
+              projectId: 'project_id',
+              metadata: 'metadata',
+              createdAt: 'created_at',
+              updatedAt: 'updated_at',
+            },
+          },
+        },
+      }),
     },
     koreanKeywords: {},
     verbose: false,

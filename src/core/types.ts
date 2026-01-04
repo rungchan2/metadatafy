@@ -118,12 +118,43 @@ export interface OutputConfig {
     endpoint: string;
     headers?: Record<string, string>;
   };
+  database?: DatabaseOutputConfig;
+}
+
+/**
+ * 데이터베이스 출력 설정
+ * 값에 ${ENV_VAR} 형식을 사용하면 환경변수에서 로드
+ */
+export interface DatabaseOutputConfig {
+  enabled: boolean;
+  provider: 'supabase' | 'custom';
+
+  // Supabase 설정
+  supabase?: {
+    url: string;        // ${SUPABASE_URL} 형식 지원
+    serviceRoleKey: string;    // ${SUPABASE_SERVICE_ROLE_KEY} 형식 지원
+    tableName: string;
+    fields: {
+      projectId: string;
+      metadata: string;
+      createdAt?: string;
+      updatedAt?: string;
+    };
+  };
+
+  // Custom API 설정
+  custom?: {
+    endpoint: string;   // ${API_ENDPOINT} 형식 지원
+    method: 'POST' | 'PUT' | 'PATCH';
+    headers?: Record<string, string>;  // 값에 ${VAR} 형식 지원
+  };
 }
 
 /**
  * 분석 결과
  */
 export interface AnalysisResult {
+  projectId: string;
   items: CodeIndexItem[];
   stats: AnalysisStats;
   timestamp: string;

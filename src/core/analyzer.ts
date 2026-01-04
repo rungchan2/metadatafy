@@ -93,6 +93,7 @@ export class ProjectAnalyzer {
     }
 
     return {
+      projectId: this.config.projectId,
       items,
       stats,
       timestamp: new Date().toISOString(),

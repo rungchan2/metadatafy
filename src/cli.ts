@@ -17,6 +17,8 @@ import {
   selectPackageManager,
   confirmBuildIntegration,
   askApiEndpoint,
+  askSupabaseIntegration,
+  askSupabaseSetup,
   confirm,
   close as closePrompts,
 } from './cli/prompts';
@@ -27,8 +29,9 @@ import {
   getInstallCommand,
   type InitOptions,
 } from './cli/config-writer';
+import { runDatabaseInit, createProvider, type AnyDatabaseConfig } from './cli/database';
 
-const VERSION = '1.0.3';
+const VERSION = '1.2.0';
 
 const HELP_TEXT = `
 metadatafy - 프로젝트 메타데이터 추출 도구
@@ -37,8 +40,9 @@ Usage:
   metadatafy <command> [options]
 
 Commands:
-  analyze     프로젝트를 분석하고 메타데이터 생성
-  init        인터랙티브 설정 및 빌드 도구 연동
+  analyze        프로젝트를 분석하고 메타데이터 생성
+  init           인터랙티브 설정 및 빌드 도구 연동
+  database-init  데이터베이스 연동 설정 (Supabase 등)
 
 Options:
   -h, --help       도움말 표시
@@ -46,6 +50,7 @@ Options:
 
 Examples:
   metadatafy init
+  metadatafy database-init
   metadatafy analyze
   metadatafy analyze --project-id my-project --output ./metadata.json
 `;
@@ -82,6 +87,9 @@ async function main() {
       break;
     case 'init':
       await runInit();
+      break;
+    case 'database-init':
+      await runDatabaseInit();
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -171,6 +179,9 @@ async function runAnalyze(args: string[]) {
       console.log(`☁️  Sent to API: ${config.output.api.endpoint}`);
     }
 
+    // 데이터베이스 업로드 (설정된 경우)
+    await uploadToDatabase(configFromFile, result, verbose);
+
     // 결과 출력
     console.log(`✅ Analysis completed in ${duration}ms\n`);
     console.log(`📊 Results:`);
@@ -237,12 +248,20 @@ async function runInit() {
     // API 엔드포인트
     const apiEndpoint = await askApiEndpoint();
 
+    // Supabase 연동
+    let supabaseConfig = null;
+    const wantSupabase = await askSupabaseIntegration();
+    if (wantSupabase) {
+      supabaseConfig = await askSupabaseSetup();
+    }
+
     const options: InitOptions = {
       projectType,
       packageManager,
       projectInfo,
       addBuildIntegration,
       apiEndpoint,
+      supabase: supabaseConfig,
     };
 
     // 설정 파일 확인
@@ -305,8 +324,142 @@ async function runInit() {
       console.log('💡 수동 분석 명령어:\n');
       console.log('   npx metadatafy analyze\n');
     }
+
+    // Supabase 설정 안내
+    if (supabaseConfig) {
+      console.log('🗄️  Supabase 연동이 설정되었습니다.');
+      console.log('   환경변수를 설정해주세요:\n');
+
+      const urlEnvName = supabaseConfig.url.slice(2, -1);
+      const keyEnvName = supabaseConfig.serviceRoleKey.slice(2, -1);
+
+      console.log(`   ${urlEnvName}=https://your-project.supabase.co`);
+      console.log(`   ${keyEnvName}=your-service-role-key\n`);
+
+      console.log('📋 Supabase에서 테이블을 생성하세요:\n');
+      console.log(`   CREATE TABLE ${supabaseConfig.tableName} (`);
+      console.log('     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,');
+      console.log('     project_id TEXT UNIQUE NOT NULL,');
+      console.log('     metadata JSONB NOT NULL,');
+      console.log('     created_at TIMESTAMPTZ DEFAULT NOW(),');
+      console.log('     updated_at TIMESTAMPTZ DEFAULT NOW()');
+      console.log('   );\n');
+    }
   } finally {
     closePrompts();
+  }
+}
+
+/**
+ * 환경변수 치환 헬퍼
+ */
+function resolveEnvVar(value: string): string {
+  if (!value || typeof value !== 'string') return value;
+  if (value.startsWith('${') && value.endsWith('}')) {
+    const envName = value.slice(2, -1);
+    return process.env[envName] || '';
+  }
+  return value;
+}
+
+/**
+ * metadata.config.json에서 데이터베이스 설정 로드
+ */
+async function loadDatabaseConfig(
+  rootDir: string,
+  configFromFile: Partial<PluginConfig>
+): Promise<AnyDatabaseConfig | null> {
+  const dbOutput = configFromFile.output?.database;
+
+  if (!dbOutput || !dbOutput.enabled) {
+    return null;
+  }
+
+  if (dbOutput.provider === 'supabase' && dbOutput.supabase) {
+    const { supabase } = dbOutput;
+
+    // 환경변수 치환
+    const url = resolveEnvVar(supabase.url);
+    const serviceRoleKey = resolveEnvVar(supabase.serviceRoleKey);
+
+    if (!url || !serviceRoleKey) {
+      console.log('⚠️  Supabase 환경변수가 설정되지 않았습니다.');
+      if (supabase.url.startsWith('${')) {
+        console.log(`   ${supabase.url.slice(2, -1)}을(를) 설정해주세요.`);
+      }
+      if (supabase.serviceRoleKey.startsWith('${')) {
+        console.log(`   ${supabase.serviceRoleKey.slice(2, -1)}을(를) 설정해주세요.`);
+      }
+      return null;
+    }
+
+    return {
+      provider: 'supabase',
+      enabled: true,
+      url,
+      serviceRoleKey,
+      tableName: supabase.tableName,
+      fields: {
+        projectId: supabase.fields.projectId,
+        metadata: supabase.fields.metadata,
+        createdAt: supabase.fields.createdAt,
+        updatedAt: supabase.fields.updatedAt,
+      },
+    } as import('./cli/database').SupabaseConfig;
+  }
+
+  if (dbOutput.provider === 'custom' && dbOutput.custom) {
+    const { custom } = dbOutput;
+    const headers: Record<string, string> = {};
+
+    // 헤더의 환경변수도 치환
+    if (custom.headers) {
+      for (const [key, value] of Object.entries(custom.headers)) {
+        headers[key] = resolveEnvVar(value);
+      }
+    }
+
+    return {
+      provider: 'custom',
+      enabled: true,
+      endpoint: resolveEnvVar(custom.endpoint),
+      method: custom.method,
+      headers,
+    } as import('./cli/database').CustomApiConfig;
+  }
+
+  return null;
+}
+
+/**
+ * 데이터베이스에 메타데이터 업로드
+ */
+async function uploadToDatabase(
+  configFromFile: Partial<PluginConfig>,
+  result: import('./core/types').AnalysisResult,
+  verbose: boolean
+): Promise<void> {
+  const dbConfig = await loadDatabaseConfig(process.cwd(), configFromFile);
+
+  if (!dbConfig) {
+    return;
+  }
+
+  if (verbose) {
+    console.log(`\n🗄️  Uploading to ${dbConfig.provider}...`);
+  }
+
+  try {
+    const provider = await createProvider(dbConfig);
+    const uploadResult = await provider.upload(result);
+
+    if (uploadResult.success) {
+      console.log(`🗄️  ${uploadResult.message} (${dbConfig.provider})`);
+    } else {
+      console.log(`⚠️  Database upload failed: ${uploadResult.error}`);
+    }
+  } catch (error) {
+    console.log(`⚠️  Database upload error: ${error instanceof Error ? error.message : error}`);
   }
 }
 

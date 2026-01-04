@@ -1,10 +1,12 @@
 import type { Plugin, ResolvedConfig } from 'vite';
 import * as path from 'path';
-import type { PluginConfig, AnalysisResult } from '../core/types';
+import type { PluginConfig, AnalysisResult, DatabaseOutputConfig } from '../core/types';
 import { ProjectAnalyzer } from '../core/analyzer';
 import { createDefaultConfig, validateConfig } from '../core/config';
 import { FileWriter } from '../core/output/file-writer';
 import { ApiSender } from '../core/output/api-sender';
+import { createProvider } from '../cli/database/provider';
+import type { SupabaseConfig, CustomApiConfig } from '../cli/database/types';
 
 export interface VitePluginOptions extends Partial<PluginConfig> {
   /**
@@ -20,6 +22,31 @@ export interface VitePluginOptions extends Partial<PluginConfig> {
    * 기본값: true
    */
   emitStatsFile?: boolean;
+
+  /**
+   * Supabase 설정 (직접 전달)
+   * 환경변수를 직접 전달할 때 사용
+   *
+   * @example
+   * metadataPlugin({
+   *   supabase: {
+   *     url: process.env.SUPABASE_URL,
+   *     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+   *     tableName: 'project_metadata',
+   *   }
+   * })
+   */
+  supabase?: {
+    url: string;
+    serviceRoleKey: string;
+    tableName: string;
+    fields?: {
+      projectId?: string;
+      metadata?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    };
+  };
 }
 
 /**
@@ -27,7 +54,8 @@ export interface VitePluginOptions extends Partial<PluginConfig> {
  */
 async function runMetadataAnalysis(
   pluginConfig: PluginConfig,
-  rootDir: string
+  rootDir: string,
+  supabaseOptions?: VitePluginOptions['supabase']
 ): Promise<AnalysisResult> {
   const analyzer = new ProjectAnalyzer(pluginConfig);
   const fileWriter = new FileWriter(pluginConfig);
@@ -60,6 +88,38 @@ async function runMetadataAnalysis(
     }
   }
 
+  // Supabase 업로드 (직접 전달된 경우)
+  if (supabaseOptions?.url && supabaseOptions?.serviceRoleKey) {
+    try {
+      const supabaseConfig: SupabaseConfig = {
+        provider: 'supabase',
+        enabled: true,
+        url: supabaseOptions.url,
+        serviceRoleKey: supabaseOptions.serviceRoleKey,
+        tableName: supabaseOptions.tableName,
+        fields: {
+          projectId: supabaseOptions.fields?.projectId || 'project_id',
+          metadata: supabaseOptions.fields?.metadata || 'metadata',
+          createdAt: supabaseOptions.fields?.createdAt || 'created_at',
+          updatedAt: supabaseOptions.fields?.updatedAt || 'updated_at',
+        },
+      };
+
+      const provider = await createProvider(supabaseConfig);
+      const uploadResult = await provider.upload(result);
+
+      if (pluginConfig.verbose) {
+        if (uploadResult.success) {
+          console.log(`[metadata-plugin] ${uploadResult.message} (Supabase)`);
+        } else {
+          console.log(`[metadata-plugin] Supabase upload failed: ${uploadResult.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('[metadata-plugin] Supabase upload error:', error);
+    }
+  }
+
   return result;
 }
 
@@ -74,6 +134,7 @@ export function metadataPlugin(options: VitePluginOptions = {}): Plugin {
   const config = createDefaultConfig(options);
   const runOn = options.runOn || 'build';
   const emitStatsFile = options.emitStatsFile !== false;
+  const supabaseOptions = options.supabase;
 
   let viteConfig: ResolvedConfig;
   let analysisResult: AnalysisResult | null = null;
@@ -114,7 +175,7 @@ export function metadataPlugin(options: VitePluginOptions = {}): Plugin {
       const rootDir = viteConfig.root;
 
       try {
-        analysisResult = await runMetadataAnalysis(config, rootDir);
+        analysisResult = await runMetadataAnalysis(config, rootDir, supabaseOptions);
       } catch (error) {
         console.error('[metadata-plugin] Analysis failed:', error);
         if (viteConfig.command === 'build') {
