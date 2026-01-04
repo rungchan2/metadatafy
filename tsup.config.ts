@@ -1,38 +1,41 @@
-import { defineConfig, Options } from 'tsup';
+import { defineConfig } from 'tsup';
 
-const commonConfig: Options = {
+export default defineConfig({
+  entry: {
+    index: 'src/index.ts',
+    vite: 'src/vite.ts',
+    next: 'src/next.ts',
+    cli: 'src/cli.ts',
+  },
   format: ['esm', 'cjs'],
   splitting: true,
-  sourcemap: true,
+  sourcemap: false,
   treeshake: true,
+  minify: true,
   external: ['vite', 'next', 'webpack', 'typescript'],
-  esbuildOptions(options) {
-    options.platform = 'node';
-  },
-};
-
-export default defineConfig([
-  // 라이브러리 빌드
-  {
-    ...commonConfig,
+  dts: {
     entry: {
       index: 'src/index.ts',
       vite: 'src/vite.ts',
       next: 'src/next.ts',
     },
-    dts: true,
-    clean: true,
   },
-  // CLI 빌드 (shebang 포함)
-  {
-    ...commonConfig,
-    entry: {
-      cli: 'src/cli.ts',
-    },
-    banner: {
-      js: '#!/usr/bin/env node',
-    },
-    dts: false,
-    clean: false,
+  clean: true,
+  esbuildOptions(options) {
+    options.platform = 'node';
   },
-]);
+  async onSuccess() {
+    // CLI 파일에 shebang 추가
+    const fs = await import('fs/promises');
+
+    for (const file of ['dist/cli.js', 'dist/cli.cjs']) {
+      try {
+        const content = await fs.readFile(file, 'utf-8');
+        if (!content.startsWith('#!/usr/bin/env node')) {
+          await fs.writeFile(file, `#!/usr/bin/env node\n${content}`);
+        }
+        await fs.chmod(file, 0o755);
+      } catch {}
+    }
+  },
+});
