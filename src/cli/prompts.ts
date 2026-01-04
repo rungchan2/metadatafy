@@ -1,19 +1,33 @@
 import * as readline from 'readline';
 import type { ProjectType, PackageManager } from './detector';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+let rl: readline.Interface | null = null;
+
+function getReadline(): readline.Interface {
+  if (!rl) {
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false,
+    });
+  }
+  return rl;
+}
 
 function question(query: string): Promise<string> {
   return new Promise((resolve) => {
-    rl.question(query, resolve);
+    process.stdout.write(query);
+    getReadline().once('line', (answer) => {
+      resolve(answer);
+    });
   });
 }
 
 export function close() {
-  rl.close();
+  if (rl) {
+    rl.close();
+    rl = null;
+  }
 }
 
 /**
@@ -97,7 +111,19 @@ export async function askApiEndpoint(): Promise<string | null> {
 
   const answer = await question('\nAPI URL (선택사항): ');
   const trimmed = answer.trim();
-  return trimmed || null;
+
+  if (!trimmed) {
+    return null;
+  }
+
+  // URL 유효성 검사
+  try {
+    new URL(trimmed);
+    return trimmed;
+  } catch {
+    console.log('⚠️  유효하지 않은 URL입니다. API 전송을 건너뜁니다.');
+    return null;
+  }
 }
 
 /**

@@ -31,7 +31,7 @@ import {
 } from './cli/config-writer';
 import { runDatabaseInit, createProvider, type AnyDatabaseConfig } from './cli/database';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 
 const HELP_TEXT = `
 metadatafy - 프로젝트 메타데이터 추출 도구
@@ -195,9 +195,17 @@ async function runAnalyze(args: string[]) {
 
     // API 전송 (설정된 경우)
     if (config.output.api?.enabled && config.output.api.endpoint) {
-      const apiSender = new ApiSender(config);
-      await apiSender.send(result);
-      console.log(`☁️  Sent to API: ${config.output.api.endpoint}`);
+      // URL 유효성 검사
+      try {
+        new URL(config.output.api.endpoint);
+        const apiSender = new ApiSender(config);
+        await apiSender.send(result);
+        console.log(`☁️  Sent to API: ${config.output.api.endpoint}`);
+      } catch {
+        if (verbose) {
+          console.log(`⚠️  Invalid API endpoint, skipping: ${config.output.api.endpoint}`);
+        }
+      }
     }
 
     // 데이터베이스 업로드
