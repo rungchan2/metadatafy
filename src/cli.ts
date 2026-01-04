@@ -31,7 +31,7 @@ import {
 } from './cli/config-writer';
 import { runDatabaseInit, createProvider, type AnyDatabaseConfig } from './cli/database';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 const HELP_TEXT = `
 metadatafy - 프로젝트 메타데이터 추출 도구
@@ -41,6 +41,7 @@ Usage:
 
 Commands:
   analyze        프로젝트를 분석하고 메타데이터 생성
+  upload         기존 메타데이터 파일을 DB에 업로드
   init           인터랙티브 설정 및 빌드 도구 연동
   database-init  데이터베이스 연동 설정 (Supabase 등)
 
@@ -50,9 +51,10 @@ Options:
 
 Examples:
   metadatafy init
-  metadatafy database-init
   metadatafy analyze
-  metadatafy analyze --project-id my-project --output ./metadata.json
+  metadatafy analyze --upload        # 분석 + DB 업로드
+  metadatafy analyze --no-upload     # 분석만 (DB 업로드 안함)
+  metadatafy upload                  # 기존 파일을 DB에 업로드
 `;
 
 const ANALYZE_HELP = `
@@ -61,6 +63,20 @@ Usage: metadatafy analyze [options]
 Options:
   -p, --project-id <id>   프로젝트 ID (기본값: 폴더명)
   -o, --output <path>     출력 파일 경로 (기본값: project-metadata.json)
+  -c, --config <path>     설정 파일 경로
+  --upload                DB 업로드 강제 실행
+  --no-upload             DB 업로드 스킵
+  --verbose               상세 로그 출력
+  -h, --help              도움말 표시
+`;
+
+const UPLOAD_HELP = `
+Usage: metadatafy upload [options]
+
+기존 메타데이터 JSON 파일을 데이터베이스에 업로드합니다.
+
+Options:
+  -i, --input <path>      입력 파일 경로 (기본값: project-metadata.json)
   -c, --config <path>     설정 파일 경로
   --verbose               상세 로그 출력
   -h, --help              도움말 표시
@@ -85,6 +101,9 @@ async function main() {
     case 'analyze':
       await runAnalyze(args.slice(1));
       break;
+    case 'upload':
+      await runUpload(args.slice(1));
+      break;
     case 'init':
       await runInit();
       break;
@@ -105,6 +124,8 @@ async function runAnalyze(args: string[]) {
       'project-id': { type: 'string', short: 'p' },
       output: { type: 'string', short: 'o' },
       config: { type: 'string', short: 'c' },
+      upload: { type: 'boolean' },
+      'no-upload': { type: 'boolean' },
       verbose: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -179,8 +200,13 @@ async function runAnalyze(args: string[]) {
       console.log(`☁️  Sent to API: ${config.output.api.endpoint}`);
     }
 
-    // 데이터베이스 업로드 (설정된 경우)
-    await uploadToDatabase(configFromFile, result, verbose);
+    // 데이터베이스 업로드
+    const shouldUpload = values.upload || (!values['no-upload'] && configFromFile.output?.database?.enabled);
+    if (shouldUpload) {
+      await uploadToDatabase(configFromFile, result, verbose);
+    } else if (verbose) {
+      console.log('ℹ️  DB upload skipped (use --upload to enable)');
+    }
 
     // 결과 출력
     console.log(`✅ Analysis completed in ${duration}ms\n`);
@@ -208,6 +234,89 @@ async function runAnalyze(args: string[]) {
     console.log('');
   } catch (error) {
     console.error('❌ Analysis failed:', error);
+    process.exit(1);
+  }
+}
+
+async function runUpload(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      input: { type: 'string', short: 'i' },
+      config: { type: 'string', short: 'c' },
+      verbose: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+  });
+
+  if (values.help) {
+    console.log(UPLOAD_HELP);
+    process.exit(0);
+  }
+
+  const rootDir = process.cwd();
+  const inputPath = values.input || 'project-metadata.json';
+  const verbose = values.verbose || false;
+
+  // 설정 파일 로드
+  let configFromFile: Partial<PluginConfig> = {};
+  if (values.config) {
+    try {
+      const configContent = await fs.readFile(values.config, 'utf-8');
+      configFromFile = JSON.parse(configContent);
+    } catch (error) {
+      console.error(`Failed to load config file: ${values.config}`);
+      process.exit(1);
+    }
+  } else {
+    const defaultConfigPath = path.join(rootDir, 'metadata.config.json');
+    try {
+      const configContent = await fs.readFile(defaultConfigPath, 'utf-8');
+      configFromFile = JSON.parse(configContent);
+      if (verbose) {
+        console.log(`Loaded config from ${defaultConfigPath}`);
+      }
+    } catch {
+      console.error('❌ metadata.config.json 파일을 찾을 수 없습니다.');
+      console.log('   npx metadatafy init 으로 설정을 먼저 생성하세요.');
+      process.exit(1);
+    }
+  }
+
+  // 메타데이터 파일 로드
+  const fullInputPath = path.resolve(rootDir, inputPath);
+  let metadata: import('./core/types').AnalysisResult;
+  try {
+    const content = await fs.readFile(fullInputPath, 'utf-8');
+    metadata = JSON.parse(content);
+  } catch (error) {
+    console.error(`❌ 메타데이터 파일을 찾을 수 없습니다: ${fullInputPath}`);
+    console.log('   npx metadatafy analyze 로 먼저 분석을 실행하세요.');
+    process.exit(1);
+  }
+
+  console.log(`\n📤 Uploading metadata from: ${fullInputPath}`);
+
+  // DB 설정 확인
+  const dbConfig = await loadDatabaseConfig(rootDir, configFromFile);
+  if (!dbConfig) {
+    console.error('❌ 데이터베이스 설정이 없습니다.');
+    console.log('   npx metadatafy database-init 으로 설정을 추가하세요.');
+    process.exit(1);
+  }
+
+  try {
+    const provider = await createProvider(dbConfig);
+    const uploadResult = await provider.upload(metadata);
+
+    if (uploadResult.success) {
+      console.log(`\n✅ ${uploadResult.message} (${dbConfig.provider})`);
+    } else {
+      console.error(`\n❌ Upload failed: ${uploadResult.error}`);
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(`\n❌ Upload error: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
   }
 }

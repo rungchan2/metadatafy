@@ -89,9 +89,21 @@ $ npx metadatafy init
 # 인터랙티브 설정 (새 프로젝트에 권장)
 npx metadatafy init
 
-# Analyze project and generate metadata
-# 프로젝트 분석 및 메타데이터 생성
+# Analyze project and generate metadata (file only)
+# 프로젝트 분석 및 메타데이터 생성 (파일만)
 npx metadatafy analyze
+
+# Analyze + upload to database
+# 분석 + 데이터베이스 업로드
+npx metadatafy analyze --upload
+
+# Analyze without DB upload (even if configured)
+# 분석만 (DB 업로드 스킵)
+npx metadatafy analyze --no-upload
+
+# Upload existing metadata file to database
+# 기존 메타데이터 파일을 DB에 업로드
+npx metadatafy upload
 
 # With options / 옵션과 함께
 npx metadatafy analyze --project-id my-project --output ./metadata.json --verbose
@@ -102,8 +114,9 @@ npx metadatafy analyze --project-id my-project --output ./metadata.json --verbos
 | Command | Description |
 |---------|-------------|
 | `init` | Interactive setup wizard / 인터랙티브 설정 마법사 |
-| `database-init` | Database connection setup (Supabase, etc.) / 데이터베이스 연동 설정 |
 | `analyze` | Analyze project and generate metadata / 프로젝트 분석 및 메타데이터 생성 |
+| `upload` | Upload existing metadata file to database / 기존 메타데이터 파일을 DB에 업로드 |
+| `database-init` | Database connection setup (Supabase, etc.) / 데이터베이스 연동 설정 |
 
 #### Analyze Options / Analyze 옵션
 
@@ -112,9 +125,19 @@ npx metadatafy analyze --project-id my-project --output ./metadata.json --verbos
 | `--project-id` | `-p` | Project ID (default: folder name) |
 | `--output` | `-o` | Output file path (default: project-metadata.json) |
 | `--config` | `-c` | Config file path |
+| `--upload` | | Force DB upload / DB 업로드 강제 실행 |
+| `--no-upload` | | Skip DB upload / DB 업로드 스킵 |
 | `--verbose` | | Enable detailed logging |
 | `--help` | `-h` | Show help |
-| `--version` | `-v` | Show version |
+
+#### Upload Options / Upload 옵션
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--input` | `-i` | Input file path (default: project-metadata.json) |
+| `--config` | `-c` | Config file path |
+| `--verbose` | | Enable detailed logging |
+| `--help` | `-h` | Show help |
 
 ### Vite Plugin
 
@@ -456,7 +479,37 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 - **project_id 기준 upsert**: 동일한 `project_id`가 있으면 업데이트, 없으면 새로 생성합니다.
 - **빌드 시 자동 업로드**: Vite/Next.js 플러그인에 Supabase 설정이 있으면 빌드마다 자동 업로드됩니다.
-- **CLI 지원**: `npx metadatafy analyze`도 `metadata.config.json`에 database 설정이 있으면 업로드합니다.
+- **CLI 지원**: `npx metadatafy analyze --upload`로 DB에 업로드합니다.
+
+### Recommended Workflow / 권장 워크플로우
+
+Build and metadata generation are separate. Run manually or add to CI.
+
+빌드와 메타데이터 생성은 분리되어 있습니다. 수동으로 실행하거나 CI에 추가하세요.
+
+```bash
+# Regular build (unchanged)
+# 일반 빌드 (변경 없음)
+npm run build
+
+# Generate metadata + upload (when needed)
+# 메타데이터 생성 + 업로드 (필요할 때)
+npx metadatafy analyze --upload
+
+# Or upload existing file only
+# 또는 기존 파일만 업로드
+npx metadatafy upload
+```
+
+**For CI / GitHub Actions:**
+
+```yaml
+- run: npm run build
+- run: npx metadatafy analyze --upload
+  env:
+    SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+```
 
 ## License / 라이선스
 
