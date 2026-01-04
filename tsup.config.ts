@@ -1,26 +1,38 @@
-import { defineConfig } from 'tsup';
+import { defineConfig, Options } from 'tsup';
 
-export default defineConfig({
-  entry: {
-    index: 'src/index.ts',
-    vite: 'src/vite.ts',
-    next: 'src/next.ts',
-    cli: 'src/cli.ts',
-  },
+const commonConfig: Options = {
   format: ['esm', 'cjs'],
-  dts: {
-    entry: {
-      index: 'src/index.ts',
-      vite: 'src/vite.ts',
-      next: 'src/next.ts',
-    },
-  },
   splitting: true,
-  clean: true,
   sourcemap: true,
   treeshake: true,
   external: ['vite', 'next', 'webpack', 'typescript'],
   esbuildOptions(options) {
     options.platform = 'node';
   },
-});
+};
+
+export default defineConfig([
+  // 라이브러리 빌드
+  {
+    ...commonConfig,
+    entry: {
+      index: 'src/index.ts',
+      vite: 'src/vite.ts',
+      next: 'src/next.ts',
+    },
+    dts: true,
+    clean: true,
+  },
+  // CLI 빌드 (shebang 포함)
+  {
+    ...commonConfig,
+    entry: {
+      cli: 'src/cli.ts',
+    },
+    banner: {
+      js: '#!/usr/bin/env node',
+    },
+    dts: false,
+    clean: false,
+  },
+]);
