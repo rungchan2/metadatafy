@@ -19,14 +19,12 @@ import { KeywordExtractor } from './extractors/keyword-extractor';
 import { CallGraphBuilder } from './resolvers/call-graph-builder';
 import {
   globToRegex,
-  FOLDER_NAME_TYPE_MAPPING,
   FILE_NAME_TYPE_MAPPING,
   PATH_SEGMENT_TYPE_MAPPING,
   SQL_MIGRATION_PATTERNS,
-  detectTypeByFileName,
-  detectComponentByNaming,
 } from './config';
 import { generateId } from '../utils/id-utils';
+import { CodePatternDetector } from './detectors/code-pattern-detector';
 
 /**
  * 프로젝트 분석기 - 메인 오케스트레이터
@@ -40,6 +38,7 @@ export class ProjectAnalyzer {
   private propsExtractor: PropsExtractor;
   private keywordExtractor: KeywordExtractor;
   private callGraphBuilder: CallGraphBuilder;
+  private codePatternDetector: CodePatternDetector;
 
   constructor(config: PluginConfig) {
     this.config = config;
@@ -50,6 +49,7 @@ export class ProjectAnalyzer {
     this.propsExtractor = new PropsExtractor();
     this.keywordExtractor = new KeywordExtractor(config.koreanKeywords);
     this.callGraphBuilder = new CallGraphBuilder();
+    this.codePatternDetector = new CodePatternDetector();
   }
 
   /**
@@ -135,22 +135,39 @@ export class ProjectAnalyzer {
     rootDir: string
   ): Promise<ParsedFile | null> {
     const relativePath = path.relative(rootDir, filePath);
-    const fileType = this.determineFileType(relativePath);
-
-    if (!fileType) {
-      return null;
-    }
-
     const content = await fs.readFile(filePath, 'utf-8');
     const ext = path.extname(filePath);
 
     // SQL 파일 처리
     if (ext === '.sql') {
+      const sqlType = this.determineFileType(relativePath);
+      if (!sqlType) return null;
       return this.sqlParser.parse(content, relativePath);
     }
 
     // TypeScript/JavaScript 파일 처리
     const sourceFile = this.tsParser.parse(content, filePath);
+
+    // 1. 경로/파일명 기반 타입 감지 시도
+    let fileType = this.determineFileType(relativePath);
+
+    // 2. 감지 실패 시 코드 패턴 분석으로 폴백
+    if (!fileType) {
+      const codeDetection = this.codePatternDetector.detect(sourceFile);
+      if (codeDetection && codeDetection.confidence >= 0.4) {
+        fileType = codeDetection.type;
+        if (this.config.verbose) {
+          console.log(
+            `[metadata-plugin] 코드 분석으로 감지: ${relativePath} → ${fileType} (${(codeDetection.confidence * 100).toFixed(0)}%)`
+          );
+          codeDetection.reasons.forEach((r) => console.log(`  - ${r}`));
+        }
+      }
+    }
+
+    if (!fileType) {
+      return null;
+    }
 
     const imports = this.importExtractor.extract(sourceFile);
     const exports = this.exportExtractor.extract(sourceFile);
@@ -170,22 +187,22 @@ export class ProjectAnalyzer {
   }
 
   /**
-   * 파일 타입 결정 (폴더 기반 + 파일명 패턴 자동 감지)
+   * 파일 타입 결정 (확실한 패턴만 처리, 나머지는 코드 분석에 위임)
    *
    * 감지 우선순위:
    * 1. SQL 마이그레이션 파일
    * 2. Next.js 특수 파일 (page.tsx, layout.tsx, route.ts)
    * 3. 경로 세그먼트 (/api/)
-   * 4. 파일명 패턴 (useAuth.ts → hook, *.service.ts → service)
-   * 5. 폴더 이름 (components/, hooks/, services/)
-   * 6. PascalCase .tsx/.jsx → component
-   * 7. glob 패턴 (하위 호환성)
-   * 8. pages 폴더 폴백
+   * 4. 사용자 정의 glob 패턴
+   * 5. pages 폴더 (Next.js Pages Router)
+   *
+   * 나머지는 코드 패턴 분석으로 처리 (parseFile에서 수행)
    */
   private determineFileType(relativePath: string): FileType | null {
     const normalizedPath = relativePath.replace(/\\/g, '/');
     const fileName = path.basename(normalizedPath);
     const ext = path.extname(fileName);
+    const pathSegments = normalizedPath.split('/');
 
     // 1. SQL 파일은 마이그레이션 패턴 확인
     if (ext === '.sql') {
@@ -210,28 +227,7 @@ export class ProjectAnalyzer {
       }
     }
 
-    // 4. 파일명 패턴 기반 감지 (useAuth.ts, *.service.ts 등)
-    const patternType = detectTypeByFileName(fileName);
-    if (patternType) {
-      return patternType;
-    }
-
-    // 5. 폴더 이름 기반 자동 감지
-    const pathSegments = normalizedPath.split('/');
-    for (let i = pathSegments.length - 2; i >= 0; i--) {
-      const folderName = pathSegments[i].toLowerCase();
-      const folderType = FOLDER_NAME_TYPE_MAPPING[folderName];
-      if (folderType) {
-        return folderType;
-      }
-    }
-
-    // 6. PascalCase .tsx/.jsx 파일은 컴포넌트로 간주
-    if (detectComponentByNaming(fileName)) {
-      return 'component';
-    }
-
-    // 7. 사용자 정의 glob 패턴 확인 (하위 호환성)
+    // 4. 사용자 정의 glob 패턴 확인
     const sortedPatterns = Object.entries(this.config.fileTypeMapping).sort(
       ([a], [b]) => b.length - a.length
     );
@@ -243,7 +239,7 @@ export class ProjectAnalyzer {
       }
     }
 
-    // 8. pages 폴더 내 파일은 route로 분류 (Next.js Pages Router)
+    // 5. pages 폴더 내 파일은 route로 분류 (Next.js Pages Router)
     if (
       pathSegments.includes('pages') &&
       (ext === '.tsx' || ext === '.ts' || ext === '.jsx' || ext === '.js')
@@ -251,6 +247,7 @@ export class ProjectAnalyzer {
       return 'route';
     }
 
+    // 나머지는 null 반환 → 코드 패턴 분석으로 처리
     return null;
   }
 
