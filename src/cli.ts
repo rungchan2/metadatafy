@@ -5,6 +5,7 @@ import { ProjectAnalyzer } from './core/analyzer';
 import { createDefaultConfig } from './core/config';
 import { FileWriter } from './core/output/file-writer';
 import { ApiSender } from './core/output/api-sender';
+import { loadEnvWithLog } from './utils/env-loader';
 import type { PluginConfig } from './core/types';
 import {
   detectProject,
@@ -26,7 +27,6 @@ import {
   addVitePlugin,
   addNextPlugin,
   getInstallCommand,
-  updateEnvFile,
   type InitOptions,
 } from './cli/config-writer';
 import { runDatabaseInit, createProvider, type AnyDatabaseConfig } from './cli/database';
@@ -137,6 +137,10 @@ async function runAnalyze(args: string[]) {
   }
 
   const rootDir = process.cwd();
+
+  // .env 파일 로드 (DB 연결 등에 필요)
+  loadEnvWithLog(rootDir, values.verbose);
+
   const projectId = values['project-id'] || path.basename(rootDir);
   const outputPath = values.output || 'project-metadata.json';
   const verbose = values.verbose || false;
@@ -263,6 +267,10 @@ async function runUpload(args: string[]) {
   }
 
   const rootDir = process.cwd();
+
+  // .env 파일 로드 (DB 연결에 필요)
+  loadEnvWithLog(rootDir, values.verbose);
+
   const inputPath = values.input || 'project-metadata.json';
   const verbose = values.verbose || false;
 
@@ -337,6 +345,10 @@ async function runInit() {
   console.log(`프로젝트: ${projectId}`);
   console.log(`경로: ${rootDir}`);
 
+  // 기존 .env 파일 로드 (Supabase 설정에서 사용)
+  const { loadEnvFiles } = await import('./utils/env-loader');
+  const { variables: existingEnvVars } = loadEnvFiles(rootDir);
+
   // 프로젝트 감지
   console.log('\n🔍 프로젝트 분석 중...');
   const projectInfo = await detectProject(rootDir);
@@ -366,7 +378,7 @@ async function runInit() {
     let supabaseConfig = null;
     const wantSupabase = await askSupabaseIntegration();
     if (wantSupabase) {
-      supabaseConfig = await askSupabaseSetup();
+      supabaseConfig = await askSupabaseSetup(existingEnvVars);
     }
 
     const options: InitOptions = {
@@ -438,39 +450,11 @@ async function runInit() {
       console.log('   npx metadatafy analyze\n');
     }
 
-    // Supabase 설정 및 .env 파일 저장
+    // Supabase 설정 안내
     if (supabaseConfig) {
-      // .env 파일에 환경변수 저장
-      if (supabaseConfig.urlValue && supabaseConfig.serviceRoleKeyValue) {
-        const envResult = await updateEnvFile(rootDir, {
-          [supabaseConfig.urlEnvName]: supabaseConfig.urlValue,
-          [supabaseConfig.serviceRoleKeyEnvName]: supabaseConfig.serviceRoleKeyValue,
-        });
-
-        if (envResult.created) {
-          console.log(`✅ .env 파일 생성됨`);
-        } else {
-          console.log(`✅ .env 파일에 환경변수 추가됨: ${envResult.updated.join(', ')}`);
-        }
-
-        // .gitignore에 .env 확인
-        try {
-          const gitignorePath = path.join(rootDir, '.gitignore');
-          const gitignore = await fs.readFile(gitignorePath, 'utf-8');
-          if (!gitignore.includes('.env')) {
-            console.log('⚠️  .gitignore에 .env를 추가하는 것을 권장합니다!');
-          }
-        } catch {
-          console.log('⚠️  .gitignore 파일이 없습니다. .env를 추가하세요!');
-        }
-      } else {
-        console.log('⚠️  환경변수 값이 설정되지 않았습니다. 나중에 수동으로 설정해주세요:');
-        console.log(`   ${supabaseConfig.urlEnvName}=https://your-project.supabase.co`);
-        console.log(`   ${supabaseConfig.serviceRoleKeyEnvName}=your-service-role-key\n`);
-      }
-
       console.log('\n🗄️  Supabase 연동이 설정되었습니다.');
-      console.log('📋 Supabase에서 테이블을 생성하세요:\n');
+      console.log(`   환경변수: \${${supabaseConfig.urlEnvName}}, \${${supabaseConfig.serviceRoleKeyEnvName}}`);
+      console.log('\n📋 Supabase에서 테이블을 생성하세요:\n');
       console.log(`   CREATE TABLE ${supabaseConfig.tableName} (`);
       console.log('     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,');
       console.log('     project_id TEXT UNIQUE NOT NULL,');

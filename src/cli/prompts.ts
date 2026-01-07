@@ -136,54 +136,55 @@ export interface SupabaseSetupResult {
   urlEnvName: string;
   serviceRoleKeyEnvName: string;
   tableName: string;
-  /** 실제 값 (.env에 저장) */
-  urlValue: string;
-  serviceRoleKeyValue: string;
 }
 
-export async function askSupabaseSetup(): Promise<SupabaseSetupResult | null> {
+export async function askSupabaseSetup(existingEnvVars: Record<string, string> = {}): Promise<SupabaseSetupResult | null> {
   console.log('\n🔧 Supabase 설정');
-  console.log('Settings > API에서 확인할 수 있습니다.\n');
+  console.log('프로젝트에서 사용 중인 환경변수 이름을 입력하세요.\n');
+
+  // 기존 .env에서 Supabase 관련 변수 찾기
+  const supabaseVars = Object.keys(existingEnvVars).filter(
+    (key) => key.toLowerCase().includes('supabase')
+  );
+
+  if (supabaseVars.length > 0) {
+    console.log('📋 감지된 Supabase 관련 환경변수:');
+    supabaseVars.forEach((v) => console.log(`   - ${v}`));
+    console.log('');
+  }
 
   // 환경변수 이름 입력
-  console.log('📝 환경변수 이름 설정 (config.json에 저장됨)');
-  const urlEnvInput = await question('  Supabase URL 환경변수 이름 [SUPABASE_URL]: ');
-  const keyEnvInput = await question('  Service Role Key 환경변수 이름 [SUPABASE_SERVICE_ROLE_KEY]: ');
+  const urlEnvInput = await question('Supabase URL 환경변수 이름 [SUPABASE_URL]: ');
+  const keyEnvInput = await question('Service Role Key 환경변수 이름 [SUPABASE_SERVICE_ROLE_KEY]: ');
 
   const urlEnvName = urlEnvInput.trim() || 'SUPABASE_URL';
   const keyEnvName = keyEnvInput.trim() || 'SUPABASE_SERVICE_ROLE_KEY';
 
-  // 실제 값 입력
-  console.log('\n🔑 환경변수 값 설정 (.env 파일에 저장됨)');
-  console.log('  ⚠️  Service Role Key는 절대 외부에 노출하지 마세요!\n');
+  // 기존 .env에 값이 있는지 확인
+  const hasUrl = !!existingEnvVars[urlEnvName];
+  const hasKey = !!existingEnvVars[keyEnvName];
 
-  const urlValue = await question(`  ${urlEnvName} 값 (예: https://xxx.supabase.co): `);
-  const keyValue = await question(`  ${keyEnvName} 값: `);
+  if (hasUrl && hasKey) {
+    console.log(`\n✅ .env 파일에서 환경변수를 찾았습니다:`);
+    console.log(`   ${urlEnvName}: ${existingEnvVars[urlEnvName].substring(0, 30)}...`);
+    console.log(`   ${keyEnvName}: ****${existingEnvVars[keyEnvName].slice(-8)}`);
+  } else {
+    const missing: string[] = [];
+    if (!hasUrl) missing.push(urlEnvName);
+    if (!hasKey) missing.push(keyEnvName);
 
-  if (!urlValue.trim() || !keyValue.trim()) {
-    console.log('\n⚠️  URL과 Service Role Key는 필수입니다.');
-    const skipSetup = await confirm('환경변수 없이 계속할까요? (나중에 수동 설정 필요)', false);
-    if (skipSetup) {
-      return {
-        urlEnvName,
-        serviceRoleKeyEnvName: keyEnvName,
-        tableName: 'project_metadata',
-        urlValue: '',
-        serviceRoleKeyValue: '',
-      };
-    }
-    return null;
+    console.log(`\n⚠️  .env 파일에 다음 환경변수가 없습니다:`);
+    missing.forEach((v) => console.log(`   - ${v}`));
+    console.log('\n   나중에 .env 파일에 추가해주세요.');
   }
 
   // 테이블 이름 입력
-  const tableInput = await question('\n  테이블 이름 [project_metadata]: ');
+  const tableInput = await question('\n테이블 이름 [project_metadata]: ');
   const tableName = tableInput.trim() || 'project_metadata';
 
   return {
     urlEnvName,
     serviceRoleKeyEnvName: keyEnvName,
     tableName,
-    urlValue: urlValue.trim(),
-    serviceRoleKeyValue: keyValue.trim(),
   };
 }
