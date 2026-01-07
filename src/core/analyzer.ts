@@ -17,7 +17,15 @@ import { ExportExtractor } from './extractors/export-extractor';
 import { PropsExtractor } from './extractors/props-extractor';
 import { KeywordExtractor } from './extractors/keyword-extractor';
 import { CallGraphBuilder } from './resolvers/call-graph-builder';
-import { globToRegex } from './config';
+import {
+  globToRegex,
+  FOLDER_NAME_TYPE_MAPPING,
+  FILE_NAME_TYPE_MAPPING,
+  PATH_SEGMENT_TYPE_MAPPING,
+  SQL_MIGRATION_PATTERNS,
+  detectTypeByFileName,
+  detectComponentByNaming,
+} from './config';
 import { generateId } from '../utils/id-utils';
 
 /**
@@ -162,20 +170,87 @@ export class ProjectAnalyzer {
   }
 
   /**
-   * 파일 타입 결정
+   * 파일 타입 결정 (폴더 기반 + 파일명 패턴 자동 감지)
+   *
+   * 감지 우선순위:
+   * 1. SQL 마이그레이션 파일
+   * 2. Next.js 특수 파일 (page.tsx, layout.tsx, route.ts)
+   * 3. 경로 세그먼트 (/api/)
+   * 4. 파일명 패턴 (useAuth.ts → hook, *.service.ts → service)
+   * 5. 폴더 이름 (components/, hooks/, services/)
+   * 6. PascalCase .tsx/.jsx → component
+   * 7. glob 패턴 (하위 호환성)
+   * 8. pages 폴더 폴백
    */
   private determineFileType(relativePath: string): FileType | null {
-    // 정렬: 더 구체적인 패턴이 먼저 매칭되도록
+    const normalizedPath = relativePath.replace(/\\/g, '/');
+    const fileName = path.basename(normalizedPath);
+    const ext = path.extname(fileName);
+
+    // 1. SQL 파일은 마이그레이션 패턴 확인
+    if (ext === '.sql') {
+      for (const pattern of SQL_MIGRATION_PATTERNS) {
+        if (normalizedPath.includes(pattern)) {
+          return 'table';
+        }
+      }
+      return null;
+    }
+
+    // 2. Next.js 특수 파일명 확인 (page.tsx, layout.tsx, route.ts 등)
+    const fileNameType = FILE_NAME_TYPE_MAPPING[fileName];
+    if (fileNameType) {
+      return fileNameType;
+    }
+
+    // 3. 경로 세그먼트 확인 (예: /api/ 포함 시)
+    for (const [segment, type] of Object.entries(PATH_SEGMENT_TYPE_MAPPING)) {
+      if (normalizedPath.includes(segment)) {
+        return type;
+      }
+    }
+
+    // 4. 파일명 패턴 기반 감지 (useAuth.ts, *.service.ts 등)
+    const patternType = detectTypeByFileName(fileName);
+    if (patternType) {
+      return patternType;
+    }
+
+    // 5. 폴더 이름 기반 자동 감지
+    const pathSegments = normalizedPath.split('/');
+    for (let i = pathSegments.length - 2; i >= 0; i--) {
+      const folderName = pathSegments[i].toLowerCase();
+      const folderType = FOLDER_NAME_TYPE_MAPPING[folderName];
+      if (folderType) {
+        return folderType;
+      }
+    }
+
+    // 6. PascalCase .tsx/.jsx 파일은 컴포넌트로 간주
+    if (detectComponentByNaming(fileName)) {
+      return 'component';
+    }
+
+    // 7. 사용자 정의 glob 패턴 확인 (하위 호환성)
     const sortedPatterns = Object.entries(this.config.fileTypeMapping).sort(
       ([a], [b]) => b.length - a.length
     );
 
     for (const [pattern, type] of sortedPatterns) {
       const regex = globToRegex(pattern);
-      if (regex.test(relativePath)) {
+      if (regex.test(normalizedPath)) {
         return type;
       }
     }
+
+    // 8. pages 폴더 내 파일은 route로 분류 (Next.js Pages Router)
+    if (
+      pathSegments.includes('pages') &&
+      (ext === '.tsx' || ext === '.ts' || ext === '.jsx' || ext === '.js')
+    ) {
+      return 'route';
+    }
+
     return null;
   }
 
