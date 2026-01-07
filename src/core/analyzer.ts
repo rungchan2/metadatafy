@@ -22,6 +22,7 @@ import {
   FILE_NAME_TYPE_MAPPING,
   PATH_SEGMENT_TYPE_MAPPING,
   SQL_MIGRATION_PATTERNS,
+  FOLDER_NAME_TYPE_MAPPING,
 } from './config';
 import { generateId } from '../utils/id-utils';
 import { CodePatternDetector } from './detectors/code-pattern-detector';
@@ -187,14 +188,15 @@ export class ProjectAnalyzer {
   }
 
   /**
-   * 파일 타입 결정 (확실한 패턴만 처리, 나머지는 코드 분석에 위임)
+   * 파일 타입 결정 (경로 기반 + 폴더명 기반 감지)
    *
    * 감지 우선순위:
    * 1. SQL 마이그레이션 파일
    * 2. Next.js 특수 파일 (page.tsx, layout.tsx, route.ts)
    * 3. 경로 세그먼트 (/api/)
-   * 4. 사용자 정의 glob 패턴
-   * 5. pages 폴더 (Next.js Pages Router)
+   * 4. 폴더 이름 기반 (components/, hooks/, utils/, lib/ 등)
+   * 5. 사용자 정의 glob 패턴
+   * 6. pages 폴더 (Next.js Pages Router)
    *
    * 나머지는 코드 패턴 분석으로 처리 (parseFile에서 수행)
    */
@@ -227,7 +229,16 @@ export class ProjectAnalyzer {
       }
     }
 
-    // 4. 사용자 정의 glob 패턴 확인
+    // 4. 폴더 이름 기반 자동 감지 (components/, hooks/, utils/, lib/ 등)
+    for (let i = pathSegments.length - 2; i >= 0; i--) {
+      const folderName = pathSegments[i].toLowerCase();
+      const folderType = FOLDER_NAME_TYPE_MAPPING[folderName];
+      if (folderType) {
+        return folderType;
+      }
+    }
+
+    // 5. 사용자 정의 glob 패턴 확인
     const sortedPatterns = Object.entries(this.config.fileTypeMapping).sort(
       ([a], [b]) => b.length - a.length
     );
@@ -239,7 +250,7 @@ export class ProjectAnalyzer {
       }
     }
 
-    // 5. pages 폴더 내 파일은 route로 분류 (Next.js Pages Router)
+    // 6. pages 폴더 내 파일은 route로 분류 (Next.js Pages Router)
     if (
       pathSegments.includes('pages') &&
       (ext === '.tsx' || ext === '.ts' || ext === '.jsx' || ext === '.js')
