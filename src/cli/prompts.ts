@@ -88,14 +88,15 @@ export async function selectPackageManager(detected: PackageManager): Promise<Pa
 
 /**
  * 빌드 도구 연동 여부
+ * Next.js 16+는 Turbopack 기본이라 webpack 플러그인 충돌 → Vite만 지원
  */
 export async function confirmBuildIntegration(projectType: ProjectType): Promise<boolean> {
-  if (projectType === 'node' || projectType === 'unknown') {
+  // Next.js는 Turbopack 충돌로 플러그인 추가 안함
+  if (projectType === 'node' || projectType === 'unknown' || projectType.startsWith('nextjs')) {
     return false;
   }
 
-  const toolName = projectType.startsWith('nextjs') ? 'next.config' : 'vite.config';
-  console.log(`\n🔧 ${toolName} 파일에 metadatafy 플러그인을 자동으로 추가할까요?`);
+  console.log(`\n🔧 vite.config 파일에 metadatafy 플러그인을 자동으로 추가할까요?`);
   console.log('  빌드 시 자동으로 메타데이터가 생성됩니다.');
 
   const answer = await question('\n추가할까요? [Y/n]: ');
