@@ -271,6 +271,7 @@ async function setupSupabase(config: GlobalConfig) {
 
   saveGlobalConfig(config);
   console.log('\n✅ Supabase 설정이 저장되었습니다.');
+  console.log('\n💡 각 프로젝트에서 metadatafy init 으로 프로젝트 ID를 설정하세요.');
 }
 
 /**
@@ -933,12 +934,22 @@ async function runInit() {
   // 글로벌 설정 확인
   const globalConfig = loadGlobalConfig();
   const hasApiServer = !!globalConfig.api?.serverUrl;
-  const hasDatabase = !!globalConfig.database?.provider;
+  const hasSupabase = globalConfig.database?.provider === 'supabase';
 
-  let selectedProject: { id: string; name: string } | null = null;
+  let projectId = folderName;
+  let projectUuid = '';
 
-  // API 서버 모드면 프로젝트 선택
-  if (hasApiServer || (!hasDatabase && isLoggedIn())) {
+  // Supabase 직접 연결 모드
+  if (hasSupabase && !hasApiServer) {
+    console.log('\n📌 프로젝트 ID 설정');
+    console.log('   Supabase code_index 테이블의 project_id 컬럼에 저장될 값입니다.');
+    console.log('   여러 프로젝트를 구분하는 데 사용됩니다.\n');
+
+    const inputId = await question(`프로젝트 ID [${folderName}]: `);
+    projectId = inputId.trim() || folderName;
+  }
+  // API 서버 모드
+  else if (hasApiServer || isLoggedIn()) {
     console.log('\n📋 프로젝트 목록 조회 중...');
 
     const serverUrl = getApiServerUrl();
@@ -974,7 +985,9 @@ async function runInit() {
             const selectedIndex = parseInt(answer.trim(), 10) - 1;
 
             if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < projects.length) {
-              selectedProject = projects[selectedIndex];
+              const selectedProject = projects[selectedIndex];
+              projectId = selectedProject.name;
+              projectUuid = selectedProject.id;
               console.log(`\n✅ 선택됨: ${selectedProject.name}`);
             }
           }
@@ -1003,8 +1016,8 @@ async function runInit() {
       packageManager,
       projectInfo,
       addBuildIntegration,
-      projectUuid: selectedProject?.id || '',
-      projectName: selectedProject?.name || folderName,
+      projectUuid,
+      projectName: projectId,
     };
 
     // 설정 파일 확인
@@ -1022,7 +1035,7 @@ async function runInit() {
 
     // 설정 파일 생성
     if (shouldWriteConfig) {
-      const configFilePath = await writeMetadataConfig(rootDir, options.projectName, options);
+      const configFilePath = await writeMetadataConfig(rootDir, projectId, options);
       console.log(`✅ 설정 파일 생성: ${path.relative(rootDir, configFilePath)}`);
     }
 
@@ -1040,7 +1053,7 @@ async function runInit() {
     console.log('\n🎉 설정이 완료되었습니다!\n');
 
     // 글로벌 설정 안내
-    if (!hasApiServer && !hasDatabase) {
+    if (!hasApiServer && !hasSupabase) {
       console.log('💡 업로드를 사용하려면 글로벌 설정을 완료하세요:');
       console.log('   metadatafy config setup\n');
     }
