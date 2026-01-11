@@ -37,7 +37,7 @@ import {
   type GlobalConfig,
 } from './cli/global-config';
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 const HELP_TEXT = `
 metadatafy - 프로젝트 메타데이터 추출 도구
@@ -47,6 +47,7 @@ Usage:
 
 Commands:
   init           프로젝트 설정 초기화
+  link           API 서버의 프로젝트와 연결
   analyze        프로젝트를 분석하고 메타데이터 생성
   upload         기존 메타데이터 파일을 업로드
 
@@ -66,6 +67,7 @@ Options:
 
 Examples:
   metadatafy init                    # 프로젝트 설정
+  metadatafy link                    # 서버 프로젝트 연결
   metadatafy analyze                 # 분석 (로컬 파일 생성)
   metadatafy analyze --upload        # 분석 + 업로드
   metadatafy config setup            # DB 연결 설정
@@ -147,6 +149,9 @@ async function main() {
       break;
     case 'init':
       await runInit();
+      break;
+    case 'link':
+      await runLink();
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -572,6 +577,108 @@ async function runWhoami() {
   }
   if (auth.expiresAt) {
     console.log(`   만료: ${new Date(auth.expiresAt).toLocaleString()}`);
+  }
+}
+
+/**
+ * 프로젝트 연결 (API 서버)
+ */
+async function runLink() {
+  const rootDir = process.cwd();
+  const folderName = path.basename(rootDir);
+
+  console.log('\n🔗 프로젝트 연결\n');
+
+  // 로그인 확인
+  if (!isLoggedIn()) {
+    console.log('❌ 로그인이 필요합니다.');
+    console.log('   metadatafy login 으로 먼저 로그인하세요.');
+    closePrompts();
+    process.exit(1);
+  }
+
+  const serverUrl = getApiServerUrl();
+  const token = getAccessToken();
+
+  if (!token) {
+    console.log('❌ 인증 토큰이 없습니다.');
+    console.log('   metadatafy login 으로 로그인하세요.');
+    closePrompts();
+    process.exit(1);
+  }
+
+  // 프로젝트 목록 조회
+  console.log('📋 프로젝트 목록 조회 중...');
+
+  try {
+    const response = await fetch(`${serverUrl}/api/projects`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        console.log('\n❌ 인증이 만료되었습니다.');
+        console.log('   metadatafy login 으로 다시 로그인하세요.');
+        closePrompts();
+        process.exit(1);
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json() as { projects: Array<{ id: string; name: string }> };
+    const projects = data.projects || [];
+
+    if (projects.length === 0) {
+      console.log('\n⚠️  연결할 수 있는 프로젝트가 없습니다.');
+      console.log('   서버에서 먼저 프로젝트를 생성하세요.');
+      closePrompts();
+      return;
+    }
+
+    console.log('\n📦 연결할 프로젝트를 선택하세요:\n');
+    projects.forEach((p, i) => {
+      console.log(`  ${i + 1}) ${p.name}`);
+    });
+
+    const answer = await question(`\n선택 [1-${projects.length}]: `);
+    const selectedIndex = parseInt(answer.trim(), 10) - 1;
+
+    if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= projects.length) {
+      console.log('\n❌ 잘못된 선택입니다.');
+      closePrompts();
+      process.exit(1);
+    }
+
+    const selectedProject = projects[selectedIndex];
+
+    // 기존 설정 파일 로드
+    const configPath = path.join(rootDir, 'metadata.config.json');
+    let existingConfig: Record<string, unknown> = {};
+
+    try {
+      const content = await fs.readFile(configPath, 'utf-8');
+      existingConfig = JSON.parse(content);
+    } catch {
+      // 파일 없으면 새로 생성
+    }
+
+    // projectId와 projectUuid 업데이트
+    existingConfig.projectId = selectedProject.name;
+    existingConfig.projectUuid = selectedProject.id;
+
+    // 설정 파일 저장
+    await fs.writeFile(configPath, JSON.stringify(existingConfig, null, 2));
+
+    console.log(`\n✅ 프로젝트 연결 완료!`);
+    console.log(`   프로젝트: ${selectedProject.name}`);
+    console.log(`   설정 파일: ${path.relative(rootDir, configPath)}`);
+    console.log('\n💡 이제 metadatafy analyze --upload 로 업로드할 수 있습니다.\n');
+
+  } catch (error) {
+    console.error(`\n❌ 프로젝트 목록 조회 실패: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  } finally {
+    closePrompts();
   }
 }
 
