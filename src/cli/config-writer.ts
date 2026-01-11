@@ -7,12 +7,12 @@ export interface InitOptions {
   packageManager: PackageManager;
   projectInfo: ProjectInfo;
   addBuildIntegration: boolean;
-  supabase?: {
-    urlEnvName: string;
-    serviceRoleKeyEnvName: string;
-    tableName: string;
-    projectUuid: string;
-  } | null;
+  /** ticket-ms 프로젝트 UUID */
+  projectUuid: string;
+  /** ticket-ms 프로젝트 이름 */
+  projectName: string;
+  /** API를 통한 업로드 활성화 여부 */
+  enableApiUpload?: boolean;
 }
 
 /**
@@ -84,6 +84,8 @@ export async function writeMetadataConfig(
 
   const config: Record<string, unknown> = {
     projectId,
+    projectUuid: options.projectUuid,
+    projectName: options.projectName,
     include: getIncludePatterns(options),
     exclude: [
       '**/node_modules/**',
@@ -99,24 +101,6 @@ export async function writeMetadataConfig(
         enabled: true,
         path: 'project-metadata.json',
       },
-      ...(options.supabase && {
-        database: {
-          enabled: true,
-          provider: 'supabase',
-          supabase: {
-            url: `\${${options.supabase.urlEnvName}}`,
-            serviceRoleKey: `\${${options.supabase.serviceRoleKeyEnvName}}`,
-            tableName: options.supabase.tableName,
-            projectUuid: options.supabase.projectUuid,
-            fields: {
-              projectId: 'project_id',
-              metadata: 'metadata',
-              createdAt: 'created_at',
-              updatedAt: 'updated_at',
-            },
-          },
-        },
-      }),
     },
     koreanKeywords: {},
     verbose: false,

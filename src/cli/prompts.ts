@@ -14,7 +14,7 @@ function getReadline(): readline.Interface {
   return rl;
 }
 
-function question(query: string): Promise<string> {
+export function question(query: string): Promise<string> {
   return new Promise((resolve) => {
     process.stdout.write(query);
     getReadline().once('line', (answer) => {
@@ -118,96 +118,3 @@ export async function confirm(message: string, defaultYes = true): Promise<boole
   return trimmed === 'y' || trimmed === 'yes';
 }
 
-/**
- * Supabase 연동 여부
- */
-export async function askSupabaseIntegration(): Promise<boolean> {
-  console.log('\n🗄️  Supabase에 메타데이터를 자동 저장할까요?');
-  console.log('  빌드 시 자동으로 데이터베이스에 업로드됩니다.');
-
-  const answer = await question('\nSupabase 연동 설정? [y/N]: ');
-  return answer.trim().toLowerCase() === 'y';
-}
-
-/**
- * Supabase 설정 입력
- */
-export interface SupabaseSetupResult {
-  /** 환경변수 이름 (config.json에 저장) */
-  urlEnvName: string;
-  serviceRoleKeyEnvName: string;
-  tableName: string;
-  /** 프로젝트 UUID (projects 테이블의 ID) */
-  projectUuid: string;
-}
-
-export async function askSupabaseSetup(existingEnvVars: Record<string, string> = {}): Promise<SupabaseSetupResult | null> {
-  console.log('\n🔧 Supabase 설정');
-  console.log('프로젝트에서 사용 중인 환경변수 이름을 입력하세요.\n');
-
-  // 기존 .env에서 Supabase 관련 변수 찾기
-  const supabaseVars = Object.keys(existingEnvVars).filter(
-    (key) => key.toLowerCase().includes('supabase')
-  );
-
-  if (supabaseVars.length > 0) {
-    console.log('📋 감지된 Supabase 관련 환경변수:');
-    supabaseVars.forEach((v) => console.log(`   - ${v}`));
-    console.log('');
-  }
-
-  // 환경변수 이름 입력
-  const urlEnvInput = await question('Supabase URL 환경변수 이름 [SUPABASE_URL]: ');
-  const keyEnvInput = await question('Service Role Key 환경변수 이름 [SUPABASE_SERVICE_ROLE_KEY]: ');
-
-  const urlEnvName = urlEnvInput.trim() || 'SUPABASE_URL';
-  const keyEnvName = keyEnvInput.trim() || 'SUPABASE_SERVICE_ROLE_KEY';
-
-  // 기존 .env에 값이 있는지 확인
-  const hasUrl = !!existingEnvVars[urlEnvName];
-  const hasKey = !!existingEnvVars[keyEnvName];
-
-  if (hasUrl && hasKey) {
-    console.log(`\n✅ .env 파일에서 환경변수를 찾았습니다:`);
-    console.log(`   ${urlEnvName}: ${existingEnvVars[urlEnvName].substring(0, 30)}...`);
-    console.log(`   ${keyEnvName}: ****${existingEnvVars[keyEnvName].slice(-8)}`);
-  } else {
-    const missing: string[] = [];
-    if (!hasUrl) missing.push(urlEnvName);
-    if (!hasKey) missing.push(keyEnvName);
-
-    console.log(`\n⚠️  .env 파일에 다음 환경변수가 없습니다:`);
-    missing.forEach((v) => console.log(`   - ${v}`));
-    console.log('\n   나중에 .env 파일에 추가해주세요.');
-  }
-
-  // 테이블 이름 입력
-  const tableInput = await question('\n테이블 이름 [code_index]: ');
-  const tableName = tableInput.trim() || 'code_index';
-
-  // 프로젝트 UUID 입력
-  console.log('\n📌 프로젝트 UUID (projects 테이블의 ID)');
-  console.log('   code_index.project_id에 저장될 UUID입니다.');
-  const projectUuidInput = await question('프로젝트 UUID: ');
-  const projectUuid = projectUuidInput.trim();
-
-  if (!projectUuid) {
-    console.log('\n⚠️  프로젝트 UUID는 필수입니다.');
-    return null;
-  }
-
-  // UUID 형식 검증
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(projectUuid)) {
-    console.log('\n⚠️  올바른 UUID 형식이 아닙니다.');
-    console.log('   예: d0de86ea-6414-4bdb-a30d-8656efec6602');
-    return null;
-  }
-
-  return {
-    urlEnvName,
-    serviceRoleKeyEnvName: keyEnvName,
-    tableName,
-    projectUuid,
-  };
-}
