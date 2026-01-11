@@ -870,7 +870,7 @@ async function doUpload(
   // 1. Supabase 직접 연결
   if (dbConfig?.provider === 'supabase' && dbConfig.supabaseUrl) {
     console.log('🔄 Supabase에 업로드 중...');
-    await uploadToSupabase(dbConfig, result, verbose);
+    await uploadToSupabase(dbConfig, projectUuid, result, verbose);
     return;
   }
 
@@ -905,6 +905,7 @@ async function doUpload(
  */
 async function uploadToSupabase(
   dbConfig: NonNullable<GlobalConfig['database']>,
+  projectUuid: string | undefined,
   result: AnalysisResult,
   verbose: boolean
 ): Promise<void> {
@@ -916,12 +917,15 @@ async function uploadToSupabase(
     process.exit(1);
   }
 
+  // projectUuid가 있으면 사용, 없으면 projectId 사용
+  const projectIdForDb = projectUuid || result.projectId;
+
   const tableName = supabaseTable || 'code_index';
 
   try {
     // 기존 데이터 삭제 (projectId 기준)
     const deleteResponse = await fetch(
-      `${supabaseUrl}/rest/v1/${tableName}?project_id=eq.${result.projectId}`,
+      `${supabaseUrl}/rest/v1/${tableName}?project_id=eq.${projectIdForDb}`,
       {
         method: 'DELETE',
         headers: {
@@ -932,15 +936,16 @@ async function uploadToSupabase(
     );
 
     if (!deleteResponse.ok && deleteResponse.status !== 404) {
-      throw new Error(`Delete failed: ${deleteResponse.status}`);
+      const errorText = await deleteResponse.text();
+      throw new Error(`Delete failed: ${deleteResponse.status} - ${errorText}`);
     }
 
-    // 새 데이터 삽입
+    // 새 데이터 삽입 (id는 DB에서 자동 생성 또는 UNIQUE 제약조건 사용)
     const rows = result.items.map((item) => ({
-      project_id: result.projectId,
-      file_path: item.path,
+      project_id: projectIdForDb,
       file_type: item.type,
-      file_name: item.name,
+      name: item.name,
+      path: item.path,
       keywords: item.keywords,
       search_text: item.searchText,
       calls: item.calls,
